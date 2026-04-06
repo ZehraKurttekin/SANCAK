@@ -6,7 +6,7 @@ material qr_plaka_6/QRMaterial
     {
       texture_unit
       {
-        texture qr.png
+        texture qr_6.png
       }
     }
   }
