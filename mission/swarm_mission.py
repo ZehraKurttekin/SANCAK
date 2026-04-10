@@ -41,7 +41,7 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 from drone_controller import DroneController
 from qr_reader import QRReader
-from formation import formation_positions
+from formation import formation_positions, compute_yaw_to_target
 from pad_scout import PadScout, PadCoordinator
 
 # ─── AYARLAR ─────────────────────────────────────────────
@@ -131,13 +131,14 @@ class FollowerNode(Node):
             mesafe = cmd['distance']
             n = cmd['n_drones']
             active = cmd.get('active_drones', list(range(1, n + 1)))
+            yaw = cmd.get('yaw', 0.0)
 
             if self.drone_id not in active:
                 return  # Bu drone aktif değil
 
             # Kendi indexini hesapla (aktif listede kaçıncı)
             my_index = active.index(self.drone_id)
-            positions = formation_positions(lx, ly, alt, tip, len(active), mesafe)
+            positions = formation_positions(lx, ly, alt, tip, len(active), mesafe, yaw)
 
             if my_index < len(positions):
                 x, y, z = positions[my_index]
@@ -244,16 +245,16 @@ class SwarmMission:
     def takeoff_all(self):
         """
         Tüm drone'ları EŞ ZAMANLI kaldır.
-        Adım 1: Hepsinin hedefini ayarla
-        Adım 2: Heartbeat yerleşsin (3 sn)
-        Adım 3: Hepsini aynı anda arm et
+        Başlangıç pozisyonlarından düz yukarı çıkar — sağa sola gitmez.
+        Kalkış bittikten sonra 5 saniye bekler.
         """
         self.log(f"Eş zamanlı kalkış → {TAKEOFF_ALTITUDE}m")
 
-        # 1. Hepsinin hedefini ayarla (beklemeden)
+        # 1. Her drone kendi spawn pozisyonunda yukarı çıkar
         for i, drone in self.drones.items():
+            cur_x, cur_y, _ = drone.get_position()
             drone.prepare_takeoff(TAKEOFF_ALTITUDE)
-            self.log(f"  Drone {i}: kalkış hedefi ayarlandı")
+            self.log(f"  Drone {i}: kalkış hedefi → ({cur_x:.1f}, {cur_y:.1f}, {TAKEOFF_ALTITUDE}m)")
 
         # 2. Heartbeat PX4'e ulaşsın
         self.log("Heartbeat bekleniyor (3s)...")
@@ -263,22 +264,35 @@ class SwarmMission:
         self.log("ARM + OFFBOARD (eş zamanlı)...")
         for i, drone in self.drones.items():
             drone.arm_and_offboard()
-            time.sleep(0.1)  # Minimal gecikme (0.5s değil!)
+            time.sleep(0.1)
 
         # 4. Kalkış tamamlanana kadar bekle
         self.log("Kalkış bekleniyor (15s)...")
         self.spin(15.0)
         self.log("Kalkış tamamlandı ✓")
 
+        # 5. Kalkış sonrası 5 saniye bekle (şartname gereği)
+        self.log("Başlangıç irtifasında 5s bekleniyor...")
+        self.spin(5.0)
+        self.log("QR1'e ilerleniyor...")
+
     # ─── FORMASYON KOMUTU (DAĞITIK) ──────────────────────
     def send_formation(self, leader_x, leader_y, altitude,
-                       tip, mesafe, active_drones=None):
+                       tip, mesafe, active_drones=None, target_x=None, target_y=None):
         """
         Lider /swarm/command'a formasyon komutu yayınlar.
         Takipçiler kendi pozisyonlarını bağımsız hesaplar.
+        target_x/y: formasyon yönünü belirlemek için sonraki hedef
         """
         if active_drones is None:
             active_drones = list(self.drones.keys())
+
+        # Yaw hesapla — hedef verilmişse o yöne, yoksa mevcut pozisyondan
+        cur_x, cur_y, _ = self.drones[1].get_position()
+        if target_x is not None and target_y is not None:
+            yaw = compute_yaw_to_target(cur_x, cur_y, target_x, target_y)
+        else:
+            yaw = compute_yaw_to_target(cur_x, cur_y, leader_x, leader_y)
 
         cmd = {
             'type': 'formation',
@@ -289,12 +303,13 @@ class SwarmMission:
             'distance': mesafe,
             'n_drones': DRONE_COUNT,
             'active_drones': active_drones,
+            'yaw': yaw,
         }
         self.cmd_pub.publish_command(cmd)
 
         # Lider kendi pozisyonunu da ayarla (index 0)
         positions = formation_positions(
-            leader_x, leader_y, altitude, tip, len(active_drones), mesafe
+            leader_x, leader_y, altitude, tip, len(active_drones), mesafe, yaw
         )
         if positions:
             x, y, z = positions[0]
@@ -303,7 +318,7 @@ class SwarmMission:
         self.log(
             f"Formasyon: {tip} | Mesafe: {mesafe}m | "
             f"Hedef: ({leader_x:.1f}, {leader_y:.1f}, {altitude:.1f}m) | "
-            f"Aktif: {active_drones}"
+            f"Yaw: {math.degrees(yaw):.1f}° | Aktif: {active_drones}"
         )
 
         # Lider hedefe ulaşsın
@@ -311,7 +326,7 @@ class SwarmMission:
 
     # ─── QR TARAMA ───────────────────────────────────────
     def navigate_to_qr(self, qr_id: int):
-        """Sürüyü QR noktasına götür (formasyon koruyarak)."""
+        """Sürüyü QR noktasına götür (formasyon rotasyonu yaparak)."""
         if qr_id not in QR_POSITIONS:
             self.log(f"QR {qr_id} bilinmiyor!")
             return
@@ -322,35 +337,36 @@ class SwarmMission:
 
         self.log(f"QR #{qr_id} hedefine gidiliyor → NED({qr_x}, {qr_y})")
 
-        # Mevcut formasyonu koru, QR noktasına git
+        # Formasyon rotasyonu: hedef yönüne döndür
         self.send_formation(
             qr_x, qr_y, self.current_altitude,
-            'OKBASI', 5.0, active
+            'OKBASI', 5.0, active,
+            target_x=qr_x, target_y=qr_y
         )
 
     def scan_qr(self, qr_id: int) -> dict:
         """
-        Sadece lider drone alçalarak QR okur.
+        Lider drone QR okumak için 3m'ye alçalır.
         Takipçiler cruise irtifasında bekler.
         """
         qr_x, qr_y = QR_POSITIONS[qr_id]
 
-        # Lider QR üstüne tam gel
+        # Cruise irtifasında tam üstüne gel
         self.drones[1].goto_local(qr_x, qr_y, self.current_altitude)
         self.drones[1].wait_until_reached(threshold=0.3, timeout=30)
 
-        # Sadece lider alçalır (takipçiler yerinde kalır)
-        self.log(f"Lider QR #{qr_id} için alçalıyor → {QR_SCAN_ALTITUDE}m")
+        # Sadece lider alçalır
         self.drones[1].goto_local(qr_x, qr_y, QR_SCAN_ALTITUDE)
         self.drones[1].wait_until_reached(threshold=0.3, timeout=15)
 
         self.qr_event.clear()
-        self.qr_reader.reset()
+        self.qr_reader.reset(expected_id=qr_id)
         self.log(f"QR #{qr_id} okunuyor... (timeout={QR_SCAN_TIMEOUT}s)")
 
         if self.qr_event.wait(timeout=QR_SCAN_TIMEOUT):
             self.log(f"QR #{qr_id} başarıyla okundu! ✓")
-            # Lider cruise irtifasına dön
+            self.log(f"QR #{qr_id} içeriği: {self.qr_data}")
+            # Cruise irtifasına dön
             self.drones[1].goto_local(qr_x, qr_y, self.current_altitude)
             self.spin(2.0)
             return self.qr_data
@@ -420,6 +436,11 @@ class SwarmMission:
         if ayrilma.get('aktif'):
             self._execute_separation(ayrilma, active)
 
+        # 6. Sürüye katılma
+        katilma = qr_data.get('suruye_katilma', {})
+        if katilma.get('aktif'):
+            self._execute_rejoin(katilma)
+
     def _execute_pitch_roll(self, pitch: float, roll: float, active: list):
         """
         Pitch/Roll manevrası — şartname:
@@ -488,73 +509,82 @@ class SwarmMission:
             pad_x, pad_y = pad_coord
             self.log(
                 f"Drone {sep_id}: {hedef_renk} pad koordinatı bulundu → "
-                f"NED({pad_x:.2f}, {pad_y:.2f}) — direkt gidiliyor"
+                f"NED({pad_x:.2f}, {pad_y:.2f}) — hassas iniş başlıyor"
             )
-            # Pad'e git
+            # Pad üstüne git (arama irtifası)
             self.drones[sep_id].goto_local(pad_x, pad_y, PAD_SEARCH_ALTITUDE)
-            self.drones[sep_id].wait_until_reached(threshold=1.0, timeout=30)
-            # Alçal ve in
-            self.drones[sep_id].goto_local(pad_x, pad_y, 0.3)
-            self.spin(3.0)
+            self.drones[sep_id].wait_until_reached(threshold=0.5, timeout=30)
+            self.log(f"Drone {sep_id}: Pad üstünde — kademeli alçalma başlıyor")
+
+            # Kademeli alçalma: 5m → 3m → 1.5m → 0.5m
+            for alt in [3.0, 1.5, 0.5]:
+                self.drones[sep_id].goto_local(pad_x, pad_y, alt)
+                self.drones[sep_id].wait_until_reached(threshold=0.3, timeout=15)
+                self.spin(0.5)
+
+            # Land komutu
             self.drones[sep_id].land()
-            self.log(f"Drone {sep_id}: {hedef_renk} pad'e indi! {bekleme_s}s bekleniyor...")
+            self.spin(3.0)
+            self.log(f"Drone {sep_id}: {hedef_renk} pad'e indi ✓ — disarm ediliyor...")
+
+            # Disarm
+            self.drones[sep_id].disarm()
+            self.log(f"Drone {sep_id}: Disarm edildi. {bekleme_s}s bekleniyor...")
             self.spin(bekleme_s)
         else:
-            # Pad koordinatı yok — arama yap
             self.log(
-                f"UYARI: {hedef_renk} pad koordinatı henüz kaydedilmemiş! "
-                f"Drone {sep_id} arama yapıyor..."
+                f"UYARI: {hedef_renk} pad koordinatı kaydedilmemiş! "
+                f"Drone {sep_id} hover'da {bekleme_s}s bekliyor..."
             )
-            cur_x, cur_y, _ = self.drones[sep_id].get_position()
-            self.drones[sep_id].goto_local(cur_x, cur_y, PAD_SEARCH_ALTITUDE)
-            self.spin(3.0)
+            self.spin(bekleme_s)
 
-            # Arama deseni
-            search_offsets = [
-                (0, 0), (3, 0), (-3, 0), (0, 3), (0, -3),
-                (5, 0), (-5, 0), (0, 5), (0, -5),
-                (5, 5), (-5, 5), (5, -5), (-5, -5),
-            ]
-            found = False
-            start = time.time()
+        # Sürüye katılma — QR'da katılma komutu gelene kadar indiği yerde bekler
+        self.log(
+            f"Drone {sep_id}: {hedef_renk} pad'de bekliyor. "
+            f"Sürüye katılmak için sonraki QR'dan komut bekleniyor."
+        )
+        # separated[sep_id] = True olarak kalır — sürüye katılma QR komutuyla olur
 
-            for ox, oy in search_offsets:
-                if time.time() - start > PAD_LAND_TIMEOUT:
-                    break
-                self.drones[sep_id].goto_local(
-                    cur_x + ox, cur_y + oy, PAD_SEARCH_ALTITUDE
-                )
-                self.drones[sep_id].wait_until_reached(threshold=0.5, timeout=8)
-                self.spin(1.0)
+    def _execute_rejoin(self, katilma: dict):
+        """
+        Sürüye katılma görevi.
+        QR'dan suruye_katilma komutu gelince ayrılmış drone kalkıp sürüye katılır.
+        """
+        drone_key = katilma.get('katilacak_drone_id', '')
+        try:
+            join_id = int(drone_key.split('_')[1])
+        except Exception:
+            self.log(f"Geçersiz katilacak_drone_id: {drone_key}")
+            return
 
-                # Pad tespit edildi mi?
-                pad_coord = self.pad_coordinator.get_pad(hedef_renk)
-                if pad_coord:
-                    pad_x, pad_y = pad_coord
-                    self.log(f"Drone {sep_id}: Arama sırasında {hedef_renk} pad bulundu!")
-                    self.drones[sep_id].goto_local(pad_x, pad_y, PAD_SEARCH_ALTITUDE)
-                    self.drones[sep_id].wait_until_reached(threshold=1.0, timeout=20)
-                    self.drones[sep_id].goto_local(pad_x, pad_y, 0.3)
-                    self.spin(3.0)
-                    self.drones[sep_id].land()
-                    self.log(f"Drone {sep_id}: {hedef_renk} pad'e indi! {bekleme_s}s bekleniyor...")
-                    self.spin(bekleme_s)
-                    found = True
-                    break
+        if join_id not in self.drones:
+            self.log(f"Drone {join_id} bulunamadı!")
+            return
 
-            if not found:
-                self.log(f"UYARI: Drone {sep_id} {hedef_renk} pad'i bulamadı, hover'da bekliyor")
-                self.spin(bekleme_s)
+        if not self.separated.get(join_id, False):
+            self.log(f"Drone {join_id} zaten sürüde, katılma gerekmiyor.")
+            return
 
-        # Sürüye yeniden katıl
-        self.log(f"Drone {sep_id} sürüye yeniden katılıyor...")
-        lx, ly, _ = self.drones[1].get_position()
-        self.drones[sep_id].arm_and_offboard()
+        self.log(f"Drone {join_id} sürüye katılıyor...")
+
+        # Arm et ve offboard moda geç
+        self.drones[join_id].arm_and_offboard()
         self.spin(2.0)
-        self.drones[sep_id].goto_local(lx, ly + 5.0, self.current_altitude)
-        self.spin(5.0)
-        self.separated[sep_id] = False
-        self.log(f"Drone {sep_id}: Sürüye katıldı ✓")
+
+        # Lider pozisyonuna yakın bir yere git
+        lx, ly, _ = self.drones[1].get_position()
+        self.drones[join_id].goto_local(lx, ly + 5.0, self.current_altitude)
+        self.drones[join_id].wait_until_reached(threshold=2.0, timeout=30)
+
+        # Sürüye dahil et
+        self.separated[join_id] = False
+        self.log(f"Drone {join_id}: Sürüye katıldı ✓")
+
+        # Aktif sürüye formasyon komutu gönder
+        active = [i for i in range(1, DRONE_COUNT + 1)
+                  if not self.separated.get(i, False)]
+        lx, ly, _ = self.drones[1].get_position()
+        self.send_formation(lx, ly, self.current_altitude, 'OKBASI', 5.0, active)
 
     # ─── ANA GÖREV DÖNGÜSÜ ───────────────────────────────
     def run(self):
@@ -565,6 +595,8 @@ class SwarmMission:
             # 2. QR zincirini takip et
             current_qr = 1
             visited = set()
+
+            gorev_basarili = True
 
             while current_qr != 0 and current_qr not in visited:
                 visited.add(current_qr)
@@ -579,7 +611,8 @@ class SwarmMission:
                 qr_data = self.scan_qr(current_qr)
 
                 if qr_data is None:
-                    self.log("QR okunamadı, görev durduruluyor!")
+                    self.log(f"❌ QR #{current_qr} okunamadı — görev başarısız!")
+                    gorev_basarili = False
                     break
 
                 # Görevi uygula
@@ -593,21 +626,30 @@ class SwarmMission:
                     f"{current_qr if current_qr != 0 else 'YOK (görev bitti)'}"
                 )
 
-            # 3. Görev tamamlandı — eve dön
-            self.log("\n🏁 Tüm görevler tamamlandı!")
-            self.log("Drone'lar başlangıç noktasına dönüyor...")
+            # 3. Eve dön
+            all_drones = list(range(1, DRONE_COUNT + 1))
 
-            active = [i for i in range(1, DRONE_COUNT + 1)
-                      if not self.separated.get(i, False)]
-            self.send_formation(0.0, 0.0, TAKEOFF_ALTITUDE, 'CIZGI', 3.0, active)
-            self.spin(10.0)
+            if gorev_basarili:
+                self.log("\n🏁 Tüm görevler tamamlandı!")
+            else:
+                self.log("\n⚠️  Görev başarısız — drone'lar eve dönüyor...")
 
-            # Hepsini indir
-            for i in active:
+            self.log("Drone'lar başlangıç noktasına CIZGI formasyonuyla dönüyor...")
+            self.send_formation(0.0, 0.0, TAKEOFF_ALTITUDE, 'CIZGI', 3.0, all_drones)
+            self.drones[1].wait_until_reached(threshold=1.0, timeout=30)
+            self.spin(3.0)
+
+            self.log("Güvenli iniş başlıyor...")
+            for i in all_drones:
                 self.drones[i].land()
-                time.sleep(1.0)
+                time.sleep(0.5)
 
-            self.log("Tüm drone'lar indi. Görev başarıyla tamamlandı! ✅")
+            self.spin(5.0)
+
+            if gorev_basarili:
+                self.log("Tüm drone'lar indi. ✅ GÖREV BAŞARILI!")
+            else:
+                self.log("Tüm drone'lar indi. ❌ GÖREV BAŞARISIZ!")
 
         except KeyboardInterrupt:
             self.log("\nGörev kullanıcı tarafından durduruldu!")

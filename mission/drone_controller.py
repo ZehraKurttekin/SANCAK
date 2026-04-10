@@ -116,6 +116,8 @@ class DroneController(Node):
         sp = TrajectorySetpoint()
         sp.position = [self.target_x, self.target_y, self.target_z]
         sp.yaw = self.target_yaw
+        # Velocity NaN bırak — PX4 kendi hız limitini uygular
+        sp.velocity = [float('nan'), float('nan'), float('nan')]
         sp.timestamp = ts
         self.setpoint_pub.publish(sp)
 
