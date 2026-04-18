@@ -22,7 +22,7 @@
 
       <include><uri>model://qr_plaka_1</uri></include> 
 
-      <pose>35 3 0.1 0 0 0</pose> 
+      <pose>25 9 0.1 0 0 0</pose> 
 
     </model> 
 
@@ -30,7 +30,7 @@
 
       <include><uri>model://qr_plaka_2</uri></include> 
 
-      <pose>25 11.66 0.1 0 0 0</pose> 
+      <pose>25 17.66 0.1 0 0 0</pose> 
 
     </model> 
 
@@ -38,7 +38,7 @@
 
       <include><uri>model://qr_plaka_3</uri></include> 
 
-      <pose>15 11.66 0.1 0 0 0</pose> 
+      <pose>15 0.66 0.1 0 0 0</pose> 
 
     </model> 
 
@@ -46,7 +46,7 @@
 
       <include><uri>model://qr_plaka_4</uri></include> 
 
-      <pose>10 3 0.1 0 0 0</pose> 
+      <pose>10 9 0.1 0 0 0</pose> 
 
     </model> 
 
@@ -54,7 +54,7 @@
 
       <include><uri>model://qr_plaka_5</uri></include> 
 
-      <pose>15 -5.66 0.1 0 0 0</pose> 
+      <pose>15 17.66 0.1 0 0 0</pose> 
 
     </model> 
 
@@ -62,7 +62,7 @@
 
       <include><uri>model://qr_plaka_6</uri></include> 
 
-      <pose>25 -5.66 0.1 0 0 0</pose> 
+      <pose>25 .66 0.1 0 0 0</pose> 
 
     </model> 
 
@@ -70,7 +70,7 @@
 
       <include><uri>model://blue_pad</uri></include> 
 
-      <pose>16 5 0.1 0 0 0</pose> 
+      <pose>16 8 0.1 0 0 0</pose> 
 
     </model> 
 
@@ -78,7 +78,7 @@
 
       <include><uri>model://red_pad</uri></include> 
 
-      <pose>20 -1 0.1 0 0 0</pose> 
+      <pose>20 2 0.1 0 0 0</pose> 
 
     </model> 
 

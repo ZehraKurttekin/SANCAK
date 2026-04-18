@@ -1,7 +1,20 @@
+# Python cache
 __pycache__/
 *.pyc
-*.AppImage
-PX4-Autopilot/
-Micro-XRCE-DDS-Agent/
-px4_ws/
-mavlink/
+*.pyo
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Yedek dosyalar
+*.before_*
+*.backup
+*.bak
+*.last_generated
+
+# Jinja auto-generated
+*.sdf.last_generated
