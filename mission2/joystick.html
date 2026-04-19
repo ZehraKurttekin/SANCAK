@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>SANCAK — Yarı Otonom Sürü Kontrol</title>
+<script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.1/dist/nipplejs.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+    color: #eee;
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+    padding: 20px;
+    overflow-x: hidden;
+  }
+  header {
+    text-align: center;
+    padding: 10px 0 20px;
+    border-bottom: 2px solid #3a4580;
+    margin-bottom: 20px;
+  }
+  h1 {
+    color: #4af;
+    font-size: 24px;
+    letter-spacing: 2px;
+  }
+  .subtitle { color: #888; font-size: 12px; margin-top: 4px; }
+
+  .status-bar {
+    background: #0d1128;
+    border: 1px solid #3a4580;
+    padding: 8px 16px;
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  .status-bar .ws-status { font-size: 13px; }
+  .connected { color: #4f4; }
+  .disconnected { color: #f44; }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .panel {
+    background: rgba(13, 17, 40, 0.8);
+    border: 1px solid #3a4580;
+    border-radius: 8px;
+    padding: 15px;
+  }
+  .panel-title {
+    color: #4af;
+    font-size: 14px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #2a3560;
+    padding-bottom: 6px;
+    letter-spacing: 1px;
+  }
+
+  .joy-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 260px;
+    position: relative;
+  }
+  .joy-label {
+    text-align: center;
+    font-size: 11px;
+    color: #aaa;
+    margin-top: 10px;
+    line-height: 1.6;
+  }
+  .joy-label strong { color: #4af; }
+
+  /* Orta panel */
+  .mid-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .mode-selector {
+    display: flex;
+    gap: 8px;
+  }
+  .mode-btn {
+    flex: 1;
+    padding: 14px;
+    border: 2px solid #3a4580;
+    background: #0d1128;
+    color: #aaa;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 4px;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+  }
+  .mode-btn.active {
+    background: #4af;
+    color: #0a0e27;
+    border-color: #4af;
+    box-shadow: 0 0 15px rgba(74, 170, 255, 0.5);
+  }
+  .mode-btn:hover:not(.active) { background: #1a1f3a; color: #eee; }
+
+  .form-btns {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+  }
+  .form-btn {
+    padding: 10px;
+    border: 1px solid #3a4580;
+    background: #0d1128;
+    color: #aaa;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+  .form-btn.active {
+    background: #fa4;
+    color: #0a0e27;
+    border-color: #fa4;
+  }
+  .form-btn:hover:not(.active) { background: #1a1f3a; color: #eee; }
+
+  .action-btns { display: flex; gap: 8px; }
+  .action-btn {
+    flex: 1;
+    padding: 14px;
+    border: 2px solid;
+    background: transparent;
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 4px;
+    letter-spacing: 1px;
+    transition: all 0.2s;
+  }
+  .takeoff-btn { border-color: #4f4; color: #4f4; }
+  .takeoff-btn:hover { background: #4f4; color: #0a0e27; }
+  .land-btn { border-color: #f44; color: #f44; }
+  .land-btn:hover { background: #f44; color: #0a0e27; }
+
+  /* Komut paneli */
+  .cmd-values {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 12px;
+    font-size: 13px;
+  }
+  .cmd-values .label { color: #888; }
+  .cmd-values .value {
+    color: #4af;
+    font-weight: bold;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .cmd-values .value.zero { color: #555; }
+
+  .bar-container {
+    height: 6px;
+    background: #0a0e27;
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .bar-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    background: #4af;
+    transition: all 0.1s;
+    border-radius: 3px;
+  }
+  .bar-fill.positive { transform-origin: left; }
+  .bar-fill.negative { transform-origin: right; }
+
+  .log {
+    margin-top: 15px;
+    background: #050816;
+    border: 1px solid #2a3560;
+    border-radius: 4px;
+    padding: 8px;
+    max-height: 120px;
+    overflow-y: auto;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .log-entry {
+    color: #888;
+    padding: 2px 0;
+    border-bottom: 1px dotted #1a1f3a;
+  }
+  .log-entry.event { color: #4af; }
+  .log-entry.warn { color: #fa4; }
+  .log-entry.ok { color: #4f4; }
+
+  @media (max-width: 1000px) {
+    .main-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ SANCAK — YARI OTONOM SÜRÜ KONTROL ⚡</h1>
+  <div class="subtitle">TEKNOFEST 2026 · Görev 2 · Sanal Kumanda Arayüzü</div>
+</header>
+
+<div class="status-bar">
+  <span>Bağlantı:
+    <span id="ws-status" class="ws-status disconnected">● DISCONNECTED</span>
+  </span>
+  <span id="ws-info">ws://localhost:8765</span>
+</div>
+
+<div class="main-grid">
+
+  <!-- SOL: Throttle + Yaw -->
+  <div class="panel">
+    <div class="panel-title">SOL KUMANDA — Throttle + Yaw</div>
+    <div class="joy-container" id="joy-left"></div>
+    <div class="joy-label">
+      <strong>Yukarı/Aşağı:</strong> İrtifa (Throttle)<br>
+      <strong>Sağ/Sol:</strong> Yaw (Dönme)
+    </div>
+  </div>
+
+  <!-- ORTA: Mod + Formasyon + Aksiyonlar + Değerler -->
+  <div class="panel mid-panel">
+    <div>
+      <div class="panel-title">MOD SEÇİMİ</div>
+      <div class="mode-selector">
+        <button class="mode-btn active" id="mode-hareket">HAREKET</button>
+        <button class="mode-btn" id="mode-manevra">MANEVRA</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-title">FORMASYON</div>
+      <div class="form-btns">
+        <button class="form-btn active" id="form-okbasi">OKBASI</button>
+        <button class="form-btn" id="form-v">V</button>
+        <button class="form-btn" id="form-cizgi">CIZGI</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-title">KALKIŞ / İNİŞ</div>
+      <div class="action-btns">
+        <button class="action-btn takeoff-btn" id="btn-takeoff">▲ KALKIŞ</button>
+        <button class="action-btn land-btn" id="btn-land">▼ İNİŞ</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-title">KOMUT DEĞERLERİ</div>
+      <div class="cmd-values">
+        <span class="label">Mod:</span>
+        <span class="value" id="v-mode">HAREKET</span>
+
+        <span class="label">Pitch:</span>
+        <span class="value" id="v-pitch">0.00</span>
+
+        <span class="label">Roll:</span>
+        <span class="value" id="v-roll">0.00</span>
+
+        <span class="label">Yaw:</span>
+        <span class="value" id="v-yaw">0.00</span>
+
+        <span class="label">Throttle:</span>
+        <span class="value" id="v-throttle">0.00</span>
+
+        <span class="label">Formasyon:</span>
+        <span class="value" id="v-form">OKBASI</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-title">OLAY KAYDI</div>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <!-- SAĞ: Pitch + Roll -->
+  <div class="panel">
+    <div class="panel-title">SAĞ KUMANDA — Pitch + Roll</div>
+    <div class="joy-container" id="joy-right"></div>
+    <div class="joy-label">
+      <strong>Yukarı/Aşağı:</strong> Pitch (İleri/Geri)<br>
+      <strong>Sağ/Sol:</strong> Roll (Yan)
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+//  SANCAK — Sanal Kumanda Frontend
+//  WebSocket ile Python bridge'e komut gönderir.
+// ══════════════════════════════════════════════════════
+
+const WS_URL = 'ws://localhost:8765';
+
+// Komut durumu (joystick'lerden sürekli güncellenir)
+const state = {
+  mode: 'HAREKET',
+  formation: 'OKBASI',
+  pitch:    0,   // -1 .. +1
+  roll:     0,   // -1 .. +1
+  yaw:      0,   // -1 .. +1
+  throttle: 0,   // -1 .. +1
+};
+
+// WebSocket bağlantısı
+let ws = null;
+let wsReady = false;
+const wsStatusEl = document.getElementById('ws-status');
+const logEl = document.getElementById('log');
+
+function logMsg(msg, cls='') {
+  const div = document.createElement('div');
+  div.className = 'log-entry ' + cls;
+  const t = new Date().toLocaleTimeString();
+  div.textContent = `[${t}] ${msg}`;
+  logEl.insertBefore(div, logEl.firstChild);
+  while (logEl.children.length > 30) logEl.removeChild(logEl.lastChild);
+}
+
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    wsReady = true;
+    wsStatusEl.textContent = '● CONNECTED';
+    wsStatusEl.classList.remove('disconnected');
+    wsStatusEl.classList.add('connected');
+    logMsg('WebSocket bağlandı', 'ok');
+  };
+  ws.onclose = () => {
+    wsReady = false;
+    wsStatusEl.textContent = '● DISCONNECTED';
+    wsStatusEl.classList.remove('connected');
+    wsStatusEl.classList.add('disconnected');
+    logMsg('WebSocket koptu — 3s sonra yeniden bağlanılacak', 'warn');
+    setTimeout(connectWS, 3000);
+  };
+  ws.onerror = (e) => {
+    logMsg('WebSocket hata', 'warn');
+  };
+  ws.onmessage = (ev) => {
+    // Bridge'den gelen geri bildirim (opsiyonel)
+    try {
+      const data = JSON.parse(ev.data);
+      if (data.log) logMsg('[ROS] ' + data.log, 'event');
+    } catch(e) {}
+  };
+}
+connectWS();
+
+function sendCommand(type, payload={}) {
+  if (!wsReady) return;
+  const msg = { type, ...payload, ts: Date.now() };
+  ws.send(JSON.stringify(msg));
+}
+
+// ── Joystick'ler ────────────────────────────────────
+// Sol: y ekseni = throttle, x ekseni = yaw
+const joyLeft = nipplejs.create({
+  zone: document.getElementById('joy-left'),
+  mode: 'static',
+  position: { left: '50%', top: '50%' },
+  color: '#4af',
+  size: 180,
+  restOpacity: 0.7,
+});
+
+joyLeft.on('move', (e, data) => {
+  // data.vector.x: -1..+1 (sağ+), data.vector.y: -1..+1 (yukarı+)
+  state.yaw      = clamp(data.vector.x, -1, 1);
+  state.throttle = clamp(data.vector.y, -1, 1);
+  updateDisplay();
+});
+joyLeft.on('end', () => {
+  state.yaw = 0;
+  state.throttle = 0;
+  updateDisplay();
+});
+
+// Sağ: y ekseni = pitch, x ekseni = roll
+const joyRight = nipplejs.create({
+  zone: document.getElementById('joy-right'),
+  mode: 'static',
+  position: { left: '50%', top: '50%' },
+  color: '#fa4',
+  size: 180,
+  restOpacity: 0.7,
+});
+
+joyRight.on('move', (e, data) => {
+  state.roll  = clamp(data.vector.x, -1, 1);
+  state.pitch = clamp(data.vector.y, -1, 1);
+  updateDisplay();
+});
+joyRight.on('end', () => {
+  state.roll = 0;
+  state.pitch = 0;
+  updateDisplay();
+});
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ── Mod & Formasyon butonları ─────────────────────
+document.getElementById('mode-hareket').onclick = () => setMode('HAREKET');
+document.getElementById('mode-manevra').onclick = () => setMode('MANEVRA');
+
+function setMode(m) {
+  state.mode = m;
+  document.getElementById('mode-hareket').classList.toggle('active', m === 'HAREKET');
+  document.getElementById('mode-manevra').classList.toggle('active', m === 'MANEVRA');
+  sendCommand('mode_change', { mode: m });
+  logMsg('Mod: ' + m, 'event');
+  updateDisplay();
+}
+
+['okbasi', 'v', 'cizgi'].forEach(f => {
+  document.getElementById('form-' + f).onclick = () => {
+    const name = f === 'okbasi' ? 'OKBASI' : f === 'v' ? 'V' : 'CIZGI';
+    state.formation = name;
+    ['okbasi','v','cizgi'].forEach(x =>
+      document.getElementById('form-' + x).classList.toggle('active', x === f));
+    sendCommand('formation_change', { formation: name });
+    logMsg('Formasyon → ' + name, 'event');
+    updateDisplay();
+  };
+});
+
+// ── Takeoff / Land ─────────────────────────────────
+document.getElementById('btn-takeoff').onclick = () => {
+  sendCommand('takeoff');
+  logMsg('KALKIŞ komutu gönderildi', 'ok');
+};
+document.getElementById('btn-land').onclick = () => {
+  sendCommand('land');
+  logMsg('İNİŞ komutu gönderildi', 'warn');
+};
+
+// ── Değerleri göster + sürekli yayınla ─────────────
+function updateDisplay() {
+  document.getElementById('v-mode').textContent     = state.mode;
+  document.getElementById('v-form').textContent     = state.formation;
+  document.getElementById('v-pitch').textContent    = state.pitch.toFixed(2);
+  document.getElementById('v-roll').textContent     = state.roll.toFixed(2);
+  document.getElementById('v-yaw').textContent      = state.yaw.toFixed(2);
+  document.getElementById('v-throttle').textContent = state.throttle.toFixed(2);
+
+  // Zero ise rengi soluklaştır
+  for (const k of ['pitch','roll','yaw','throttle']) {
+    const el = document.getElementById('v-' + k);
+    if (Math.abs(state[k]) < 0.02) el.classList.add('zero');
+    else el.classList.remove('zero');
+  }
+}
+
+// 20 Hz komut yayını — joystick her zaman aktif değerleri gönderir
+setInterval(() => {
+  if (!wsReady) return;
+  sendCommand('control', {
+    mode: state.mode,
+    formation: state.formation,
+    pitch: state.pitch,
+    roll: state.roll,
+    yaw: state.yaw,
+    throttle: state.throttle,
+  });
+}, 50);
+
+updateDisplay();
+logMsg('Sanal kumanda hazır. Bridge bekleniyor...', '');
+</script>
+
+</body>
+</html>
