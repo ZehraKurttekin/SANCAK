@@ -592,12 +592,12 @@
         </camera>
         <always_on>1</always_on>
         <update_rate>10</update_rate>
-        <visualize>true</visualize>
+        <visualize>false</visualize>
         <plugin name="down_camera_plugin_{{ mavlink_id }}" filename="libgazebo_ros_camera.so">
           <ros>
-            <namespace>/uav{{ mavlink_id }}/down_camera</namespace>
+            <namespace>/uav{{ mavlink_id|int - 1 }}/down_camera</namespace>
           </ros>
-          <robotNamespace>/uav{{ mavlink_id }}/down_camera</robotNamespace>
+          <robotNamespace>/uav{{ mavlink_id|int - 1 }}/down_camera</robotNamespace>
           <cameraName>down_camera</cameraName>
           <imageTopicName>image_raw</imageTopicName>
           <cameraInfoTopicName>camera_info</cameraInfoTopicName>
